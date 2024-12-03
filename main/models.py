@@ -74,6 +74,10 @@ class Department(models.Model):
         return self.courses.count()
 
 
+from django.db import models
+from django.conf import settings
+import os
+
 class Course(models.Model):
     code = models.IntegerField(primary_key=True)
     name = models.CharField(max_length=255, null=False, unique=True)
@@ -83,6 +87,11 @@ class Course(models.Model):
         Faculty, on_delete=models.SET_NULL, null=True, blank=True)
     studentKey = models.IntegerField(null=False, unique=True)
     facultyKey = models.IntegerField(null=False, unique=True)
+    image = models.ImageField(
+        upload_to='course_images/', 
+        null=True, 
+        blank=True
+    )  # Image field for course images
 
     class Meta:
         unique_together = ('code', 'department', 'name')
@@ -90,6 +99,7 @@ class Course(models.Model):
 
     def __str__(self):
         return self.name
+
 
 
 class Announcement(models.Model):

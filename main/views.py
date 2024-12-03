@@ -72,7 +72,10 @@ def std_login(request):
 def std_logout(request):
     request.session.flush()
     return redirect('std_login')
-
+def home_page(request):
+    return render(request, 'home.html')
+def listing(request):
+    return render(request,'courses.html')
 
 # Display all courses (student view)
 def myCourses(request):

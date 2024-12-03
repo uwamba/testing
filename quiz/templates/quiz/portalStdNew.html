@@ -134,40 +134,53 @@
       <form action="{% url 'studentAnswer' course.code quiz.id %}" method="post">
          {% csrf_token %}
          {% for question in questions  %}
+         {% if question.type == 'MC' %}  
          <div class="border border-warning mb-3 bg-warning bg-opacity-10 rounded p-3">
             <div class="d-flex justify-content-between border-bottom mb-3">
-               <h6 class="fw-bold">Question {{forloop.counter}} of {{ total_questions }}</h6>
-               <h6 class="fw-bold">Marks : {{question.marks}}</h6>
+               <h6 class="fw-bold">Question {{forloop.counter}} of {{ total_questions }} Maxum Selection: {{question.question.max_selection}}</h6>
+               <h6 class="fw-bold">Marks : {{question.question.marks}}</h6>
             </div>
             <label class="fw-bold mb-2"> {{question.question}} </label>
+            {% for option in question.options %}
             <div class="form-check mb-2">
-               <input class="form-check-input" type="radio" name="{{question.id}}" value="A">
+               <input class="form-check-input" 
+               type="checkbox" 
+               name="{{question.question.id}}" 
+               id="{{question.question.id}}"
+               value="{{ option.option_text }}" class="mc-option" 
+               onclick="countChecked('{{ question.question.id }}','{{question.question.max_selection}}')">
                <label class="form-check-label">
-               A : {{question.option1}}
+                  {{ option.option_text }}
                </label>
             </div>
-            <div class="form-check mb-2">
-               <input class="form-check-input" type="radio" name="{{question.id}}" value="B">
-               <label class="form-check-label">
-               B : {{question.option2}}
-               </label>
-            </div>
-            <div class="form-check mb-2">
-               <input class="form-check-input" type="radio" name="{{question.id}}" value="C">
-               <label class="form-check-label">
-               C : {{question.option3}}
-               </label>
-            </div>
-            <div class="form-check mb-2">
-               <input class="form-check-input" type="radio" name="{{question.id}}" value="D">
-               <label class="form-check-label">
-               D : {{question.option4}}
-               </label>
-            </div>
+            {% endfor %}
             <input type="hidden" name="question" value="{{question.id}}">
             <input type="hidden" name="quiz" value="{{quiz.id}}">
             <input type="hidden" name="course" value="{{course.code}}">
          </div>
+         
+         {% else %}
+         <div class="border border-warning mb-3 bg-warning bg-opacity-10 rounded p-3">
+            <div class="d-flex justify-content-between border-bottom mb-3">
+               <h6 class="fw-bold">Question {{forloop.counter}} of {{ total_questions }} Maxum Selection: {{question.question.max_selection}}</h6>
+               <h6 class="fw-bold">Marks : {{question.question.marks}}</h6>
+            </div>
+            <label class="fw-bold mb-2"> {{question.question}} </label>
+            {% for option in question.options %}
+            <div class="form-check mb-2">
+               <input class="form-check-input" type="radio" name="{{question.question.id}}" value="{{ option.option_text }}" class="mc-option">
+               <label class="form-check-label">
+                  {{ option.option_text }}
+               </label>
+            </div>
+            {% endfor %}
+            <input type="hidden" name="question" value="{{question.id}}">
+            <input type="hidden" name="quiz" value="{{quiz.id}}">
+            <input type="hidden" name="course" value="{{course.code}}">
+         </div>
+
+
+         {% endif %}
          {% endfor %}
          <div class="d-flex justify-content-end bg-light p-2 border rounded mb-3">
             <input id="subForm" type="submit" value="Submit" class="btn btn-sm btn-primary px-3">
@@ -176,6 +189,24 @@
    </div>
 </div>
 <script>
+   function countChecked(questionId,max) {
+    // Get all checkboxes for this question
+
+    const checkboxes = document.querySelectorAll(`input[name="${questionId}"]`);
+    
+    // Count the number of checked checkboxes
+    const checkedCount = Array.from(checkboxes).filter(checkbox => checkbox.checked).length;
+
+    const checkedCheckboxes = Array.from(checkboxes).filter(checkbox => checkbox.checked);
+    
+    // Check if the number of checked checkboxes exceeds the max limit
+    if (checkedCheckboxes.length > max) {
+        // Uncheck the last checked checkbox (i.e., the one that caused the overflow)
+        checkedCheckboxes[checkedCheckboxes.length - 1].checked = false;
+        alert(`You can only select a maximum of ${max} options.`);
+    }
+    
+}
 $('.form-check-label').click(function(){
    $(this).parent().find('input').prop('checked', true);
 });
@@ -284,3 +315,4 @@ if (percentage > 85) {
 
 </script>
 {% endblock %}
+

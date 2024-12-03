@@ -1,14 +1,15 @@
 import datetime
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import Quiz, Question, StudentAnswer
+from .models import Quiz, Question, StudentAnswer,MultipleChoiceOption
 from main.models import Student, Course, Faculty
 from main.views import is_faculty_authorised, is_student_authorised
 from django.contrib import messages
 from django.utils import timezone
 from django.db.models import Count, Sum, F, FloatField, Q, Prefetch
 from django.db.models.functions import Cast
+import logging
 
-
+logger = logging.getLogger(__name__)
 def quiz(request, code):
     try:
         course = Course.objects.get(code=code)
@@ -100,8 +101,8 @@ def myQuizzes(request, code):
         # Add total marks obtained, percentage, and total questions for previous quizzes
         for quiz in previous_quizzes:
             student_answers = quiz.studentanswer_set.filter(student=student)
-            total_marks_obtained = sum([student_answer.question.marks if student_answer.answer ==
-                                       student_answer.question.answer else 0 for student_answer in student_answers])
+            total_marks_obtained = sum([student_answer.marks for student_answer in student_answers])
+            total_marks_obtained = round(total_marks_obtained, 1)
             quiz.total_marks_obtained = total_marks_obtained
             quiz.total_marks = sum(
                 [question.marks for question in quiz.question_set.all()])
@@ -131,12 +132,53 @@ def startQuiz(request, code, quiz_id):
         questions = Question.objects.filter(quiz=quiz)
         total_questions = questions.count()
 
+        # Calculate total marks
         marks = 0
         for question in questions:
             marks += question.marks
         quiz.total_marks = marks
 
-        return render(request, 'quiz/portalStdNew.html', {'course': course, 'quiz': quiz, 'questions': questions, 'total_questions': total_questions, 'student': Student.objects.get(student_id=request.session['student_id'])})
+        # Preparing question data to handle different question types
+        question_data = []
+        for question in questions:
+            if question.question_type == 'MC':  # Multiple Choice (Multiple answers allowed)
+                options = MultipleChoiceOption.objects.filter(question=question)
+                question_data.append({
+                    'question': question,
+                    'type': question.question_type,
+                    'options': options,
+                    'multiple': True,  # Indicating multiple choices allowed
+                })
+            elif question.question_type == 'SC':  # Single Choice (Only one answer allowed)
+                options = MultipleChoiceOption.objects.filter(question=question)
+                question_data.append({
+                    'question': question,
+                    'type': question.question_type,
+                    'options': options,
+                    'multiple': False,  # Indicating only one choice allowed
+                })
+            elif question.question_type == 'TF':  # True/False
+                question_data.append({
+                    'question': question,
+                    'type': question.question_type,
+                    'options': options,
+                    'multiple': False,  # Only one choice allowed
+                })
+            elif question.question_type == 'FIB':  # Fill in the Blank
+                question_data.append({
+                    'question': question,
+                    'type': question.question_type,
+                    'options': options,  # No options for Fill in the Blank
+                    'multiple': False,  # Only one input field allowed
+                })
+
+        return render(request, 'quiz/portalStdNew.html', {
+            'course': course,
+            'quiz': quiz,
+            'questions': question_data,  # Pass the processed question data
+            'total_questions': total_questions,
+            'student': Student.objects.get(student_id=request.session['student_id'])
+        })
     else:
         return redirect('std_login')
 
@@ -145,19 +187,52 @@ def studentAnswer(request, code, quiz_id):
     if is_student_authorised(request, code):
         course = Course.objects.get(code=code)
         quiz = Quiz.objects.get(id=quiz_id)
-        questions = Question.objects.filter(quiz=quiz)
         student = Student.objects.get(student_id=request.session['student_id'])
+        questions = Question.objects.filter(quiz=quiz)
+        student_answers = StudentAnswer.objects.filter(student=student, quiz=quiz)
+        total_marks_obtained = 0
+        total_possible_marks = 0
+
+        result_details = []  # To store details for each question
 
         for question in questions:
-            answer = request.POST.get(str(question.id))
-            student_answer = StudentAnswer(student=student, quiz=quiz, question=question,
-                                           answer=answer, marks=question.marks if answer == question.answer else 0)
-            # prevent duplicate answers & multiple attempts
-            try:
-                student_answer.save()
-            except:
-                redirect('myQuizzes', code=code)
-        return redirect('myQuizzes', code=code)
+         # Retrieve all selected answers for the question
+          selected_answers = request.POST.getlist(str(question.id))  # Get multiple answers as a list
+          selected_answers_count = len(selected_answers)
+          marks=0
+          for answer in selected_answers:  # Loop through each selected answer
+              answers=MultipleChoiceOption.objects.filter(question=question,is_correct=True)
+              answers_count=MultipleChoiceOption.objects.filter(question=question,is_correct=True).count()
+              count=0
+              for option in answers:  # Loop through all the correct options
+                if option.option_text == answer:  # Compare the text of the option with the student's answer
+                    print(f"answer true_____________________ {answer}, {option.option_text}")
+                    count += 1
+                else:
+                    print(f"answer false_____________________ {answer}, {option.option_text}")
+
+              print(f"answers_count___________________ {answers_count}")
+              if count>answers_count:
+                 marks=0
+              else:
+                 marks=count * question.marks/answers_count
+                 
+              student_answer = StudentAnswer(
+                    student=student,
+                    quiz=quiz,
+                    question=question,
+                    answer=answer,
+                    marks=marks
+                )
+              try:
+                student_answer.save()  # Save each selected answer
+                print(f"Saved answer for question {question.id}: {answer}")
+              except Exception as e:
+                    logger.error(f"Error saving answer for Question {question.id}: {str(e)}")
+                    redirect('myQuizzes', code=code)
+
+        return redirect('myQuizzes', code=code)  
+    
     else:
         return redirect('std_login')
 
@@ -167,41 +242,64 @@ def quizResult(request, code, quiz_id):
         course = Course.objects.get(code=code)
         quiz = Quiz.objects.get(id=quiz_id)
         questions = Question.objects.filter(quiz=quiz)
+
         try:
-            student = Student.objects.get(
-                student_id=request.session['student_id'])
-            student_answers = StudentAnswer.objects.filter(
-                student=student, quiz=quiz)
+            student = Student.objects.get(student_id=request.session['student_id'])
+            student_answers = StudentAnswer.objects.filter(student=student, quiz=quiz)
+
             total_marks_obtained = 0
-            for student_answer in student_answers:
-                total_marks_obtained += student_answer.question.marks if student_answer.answer == student_answer.question.answer else 0
-            quiz.total_marks_obtained = total_marks_obtained
-            quiz.total_marks = 0
             for question in questions:
-                quiz.total_marks += question.marks
-            quiz.percentage = (total_marks_obtained / quiz.total_marks) * 100
-            quiz.percentage = round(quiz.percentage, 2)
-        except:
+                # Get the student's answers for this question
+                student_answers_for_question = student_answers.filter(question=question)
+                correct_answers = question.options.filter(is_correct=True)  # Get correct options
+
+                # Check if all the correct answers are selected
+                correct_answer_ids = set(correct_answers.values_list('id', flat=True))
+                student_answer_ids = set(student_answers_for_question.values_list('answer', flat=True))
+                    
+                # Calculate marks
+                if correct_answer_ids == student_answer_ids:  # Full marks if all correct answers are selected
+                    total_marks_obtained += question.marks
+                else:  # No partial marking (can adjust based on requirements)
+                    pass
+
+            # Set total marks and calculate percentage
+            quiz.total_marks_obtained = total_marks_obtained
+            quiz.total_marks = sum(question.marks for question in questions)
+            quiz.percentage = round((total_marks_obtained / quiz.total_marks) * 100, 2) if quiz.total_marks > 0 else 0
+
+        except Exception as e:
+            # Handle errors gracefully
+            logger.error(f"Error calculating results: {e}")
             quiz.total_marks_obtained = 0
             quiz.total_marks = 0
             quiz.percentage = 0
 
+        # Add additional details to the questions for rendering
         for question in questions:
-            student_answer = StudentAnswer.objects.get(
-                student=student, question=question)
-            question.student_answer = student_answer.answer
+            student_answers_for_question = student_answers.filter(question=question)
+            question.student_answers = student_answers_for_question  # Store student answers for rendering
 
-        student_answers = StudentAnswer.objects.filter(
-            student=student, quiz=quiz)
-        for student_answer in student_answers:
-            quiz.time_taken = student_answer.created_at - quiz.start
-            quiz.time_taken = quiz.time_taken.total_seconds()
+        # Calculate time taken for submission
+        first_answer = student_answers.order_by('created_at').first()
+        last_answer = student_answers.order_by('created_at').last()
+        if first_answer and last_answer:
+            quiz.time_taken = (last_answer.created_at - quiz.start).total_seconds()
             quiz.time_taken = round(quiz.time_taken, 2)
-            quiz.submission_time = student_answer.created_at.strftime(
-                "%a, %d-%b-%y at %I:%M %p")
-        return render(request, 'quiz/quizResult.html', {'course': course, 'quiz': quiz, 'questions': questions, 'student': student})
+            quiz.submission_time = last_answer.created_at.strftime("%a, %d-%b-%y at %I:%M %p")
+        else:
+            quiz.time_taken = 0
+            quiz.submission_time = "N/A"
+
+        return render(request, 'quiz/quizResult.html', {
+            'course': course,
+            'quiz': quiz,
+            'questions': questions,
+            'student': student
+        })
     else:
         return redirect('std_login')
+
 
 
 def quizSummary(request, code, quiz_id):

@@ -1,10 +1,15 @@
-from venv import create
 from django.db import models
 from main.models import Student, Course
 
 
-# Create your models here.
-
+# Question Types
+QUESTION_TYPES = (
+    ('MC', 'Multiple Choice'),
+    ('SC', 'Single Choice'),
+    ('TF', 'True/False'),
+    ('FIB', 'Fill in the Blank'),
+    # Add other question types as needed
+)
 
 class Quiz(models.Model):
     title = models.CharField(max_length=100)
@@ -33,12 +38,6 @@ class Quiz(models.Model):
     def total_questions(self):
         return Question.objects.filter(quiz=self).count()
 
-    def question_sl(self):
-        return Question.objects.filter(quiz=self).count() + 1
-
-    def total_marks(self):
-        return Question.objects.filter(quiz=self).aggregate(total_marks=models.Sum('marks'))['total_marks']
-
     def starts(self):
         return self.start.strftime("%a, %d-%b-%y at %I:%M %p")
 
@@ -49,48 +48,80 @@ class Quiz(models.Model):
         return Student.objects.filter(studentanswer__quiz=self).distinct().count()
 
 
-class Question(models.Model):
-    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE)
-    question = models.TextField()
-    marks = models.IntegerField(default=0, null=False)
-    option1 = models.TextField(null=False, blank=False, default='',)
-    option2 = models.TextField(null=False, blank=False, default='')
-    option3 = models.TextField(null=False, blank=False, default='')
-    option4 = models.TextField(null=False, blank=False, default='')
-    answer = models.CharField(max_length=1, choices=(
-        ('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')), default='A')
-    explanation = models.TextField(null=True, blank=True)
+class MultipleChoiceOption(models.Model):
+    question = models.ForeignKey('Question', related_name='options', on_delete=models.CASCADE)
+    option_text = models.TextField()
+    is_correct = models.BooleanField(default=False)
 
     def __str__(self):
-        return self.question
+        return self.option_text
+
+
+class Question(models.Model):
+    
+    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE)
+    question_text = models.TextField()
+    marks = models.IntegerField(default=0)
+    explanation = models.TextField(null=True, blank=True)
+    
+    question_type = models.CharField(
+        max_length=3,
+        choices=QUESTION_TYPES,
+        default='MC',
+    )
+    max_selection = models.PositiveIntegerField(default=1)  # Limit the number of options a student can select
+    
+    correct_answer_text = models.TextField(null=True, blank=True)  # For Fill in the Blank and True/False questions
+
+    def __str__(self):
+        return self.question_text
 
     def get_answer(self):
-        case = {
-            'A': self.option1,
-            'B': self.option2,
-            'C': self.option3,
-            'D': self.option4,
-        }
-        return case[self.answer]
+        if self.question_type in ['MC', 'SC']:
+            correct_option = self.options.filter(is_correct=True).first()
+            return correct_option.option_text if correct_option else None
+        elif self.question_type == 'TF':
+            return self.correct_answer_text  # For True/False, just return the stored value (True/False)
+        elif self.question_type == 'FIB':
+            return self.correct_answer_text  # For Fill in the Blank, return the answer text
 
     def total_correct_answers(self):
-        return StudentAnswer.objects.filter(question=self, answer=self.answer).count()
+        if self.question_type == 'TF':
+            # Check if student selected the correct boolean answer for True/False
+            return StudentAnswer.objects.filter(question=self, answer__text=self.correct_answer_text).count()
+        elif self.question_type == 'FIB':
+            # Check if student's answer matches the correct text for Fill in the Blank
+            return StudentAnswer.objects.filter(question=self, answer__text=self.correct_answer_text).count()
+        else:
+            return StudentAnswer.objects.filter(question=self, answer__is_correct=True).count()
 
     def total_wrong_answers(self):
-        return StudentAnswer.objects.filter(question=self).exclude(answer=self.answer).count()
+        if self.question_type == 'TF':
+            # Check if student selected the wrong answer for True/False
+            return StudentAnswer.objects.filter(question=self).exclude(answer__text=self.correct_answer_text).count()
+        elif self.question_type == 'FIB':
+            # Check if student's answer does not match the correct answer for Fill in the Blank
+            return StudentAnswer.objects.filter(question=self).exclude(answer__text=self.correct_answer_text).count()
+        else:
+            return StudentAnswer.objects.filter(question=self).exclude(answer__is_correct=True).count()
 
 
 class StudentAnswer(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
     quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE)
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
-    answer = models.CharField(max_length=1, choices=(
-        ('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')), default='', null=True, blank=True)
-    marks = models.IntegerField(null=True, blank=True)
+    answer = models.TextField(null=True, blank=True)  # For TF and FIB questions, store text answer
+    marks = models.DecimalField(
+        max_digits=6,    # Maximum number of digits
+        decimal_places=5,  # Number of decimal places
+        null=True, 
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
     def __str__(self):
-        return self.student.name + ' ' + self.quiz.title + ' ' + self.question.question
+        return f'{self.student.name} - {self.quiz.title} - {self.question.question_text}'
 
-    class Meta:
-        unique_together = ('student', 'quiz', 'question')
+
+
+    
